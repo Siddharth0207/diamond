@@ -1,0 +1,14 @@
+ctranslate2
+langchain-nvidia-ai-endpoints
+langchain
+Flask
+faster-whisper
+sentence-transformers
+pinecone-client
+pypdf
+python-dotenv
+ctransformers
+langchain-pinecone
+langchain_community
+
+-e .
