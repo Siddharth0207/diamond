@@ -9,14 +9,14 @@ from faster_whisper import WhisperModel
 
 st.title("🎙️ Voice Chatbot with WebRTC")
 
-recording = []
-# State variable to toggle recording
+# All Session States Variables 
+# Session state
 if "recording" not in st.session_state:
     st.session_state["recording"] = False
-
-# Initialize transcription in session state
 if "transcription" not in st.session_state:
     st.session_state["transcription"] = ""
+if "audio_chunks" not in st.session_state:
+    st.session_state["audio_chunks"] = []
 
 # Start/Stop Button
 if st.button("🎤 Start Recording" if not st.session_state["recording"] else "⛔ Stop Recording"):
@@ -55,13 +55,14 @@ class AudioReciever:
         new_transcription = ""
         for segment in segments:
             new_transcription += segment.text + " "
+        
+        
 
         # Update session state with new transcription
         if new_transcription.strip():
             st.session_state["transcription"] += new_transcription
             # Optionally, trigger Streamlit to rerun and display the updated transcription
             st.rerun()
-    return 
 
 
 
@@ -72,3 +73,6 @@ webrtc_streamer(
     audio_processor_factory=AudioReciever,
     media_stream_constraints={"audio": True, "video": False},
 )
+
+
+# Rewrite this part to use the session state variable
