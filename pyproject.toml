@@ -10,4 +10,5 @@ dependencies = [
     "nvidia-riva-client>=2.16.0",
     "pyav>=14.2.1",
     "streamlit-webrtc>=0.62.4",
+    "tts",
 ]

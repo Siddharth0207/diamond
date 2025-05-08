@@ -1,14 +1,13 @@
-ctranslate2
-langchain-nvidia-ai-endpoints
-langchain
-Flask
+langchain==0.3.25
+langchain-community==0.3.23
+langchain-core==0.3.59
+langchain-nvidia-ai-endpoints==0.3.10
+langchain-text-splitters==0.3.8
+langsmith==0.3.42
+numpy==2.2.5
+pandas==2.2.3
+python-dotenv==1.1.0
+streamlit
+scipy
+pydub
 faster-whisper
-sentence-transformers
-pinecone-client
-pypdf
-python-dotenv
-ctransformers
-langchain-pinecone
-langchain_community
-
--e .
