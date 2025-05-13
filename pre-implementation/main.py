@@ -61,4 +61,5 @@ if st.button("🎤 Start Listening"):
 
     segments, _ = model.transcribe(temp_wav.name)
     full_text = " ".join([seg.text for seg in segments])
-    st.markdown(f"**📝 Transcription:** `{full_text.strip()}`")
+    final_text_to_read = full_text.strip()
+    st.markdown(f"**📝 Transcription:** `{final_text_to_read}`")
