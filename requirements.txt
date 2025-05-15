@@ -11,3 +11,8 @@ streamlit
 scipy
 pydub
 faster-whisper
+pydub
+fastapi
+uvicorn
+pydantic
+
