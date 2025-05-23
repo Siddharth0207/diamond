@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>WebSocket Audio Stream</title>
+</head>
+
+<body>
+    <h1>Real-time Audio Processor</h1>
+    <button onclick="startAudio()">Start Recording</button>
+    <button onclick="stopAudio()">Stop Recording</button>
+    <ul id='messages'>
+    </ul>
+    <script>
+        let audioContext, processor, input;
+        let ws = null;
+        let isStreaming = false;
+
+        const VAD_SENSITIVITY = 0.01;  // Amplitude threshold for voice
+        const VAD_TIMEOUT = 500;       // ms of silence before stopping
+
+        let vadTimer = null;
+        let isSpeaking = false;
+        const messages = document.getElementById('messages');
+
+        async function initAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                input = audioContext.createMediaStreamSource(stream);
+
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                input.connect(processor);
+                processor.connect(audioContext.destination);
+
+                ws = new WebSocket("ws://localhost:8000/ws/audio");
+                ws.onmessage = (event) => {
+                    messages.innerHTML += `<li>Transcription: ${event.data}</li>`;
+                };
+                ws.onopen = () => {
+                    messages.innerHTML += "<li>WebSocket connected. Listening for speech...</li>";
+                };
+                ws.onerror = () => messages.innerHTML += "<li>WebSocket error</li>";
+                ws.onclose = () => messages.innerHTML += "<li>WebSocket closed</li>";
+
+                processor.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const max = Math.max(...inputData.map(Math.abs));
+
+                    if (max > VAD_SENSITIVITY) {
+                        if (!isSpeaking) {
+                            messages.innerHTML += "<li>Speech started</li>";
+                            isSpeaking = true;
+                        }
+
+                        const int16Buffer = floatTo16BitPCM(inputData);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(int16Buffer);
+                        }
+
+                        clearTimeout(vadTimer);
+                        vadTimer = setTimeout(() => {
+                            if (isSpeaking) {
+                                messages.innerHTML += "<li>Speech ended</li>";
+                                isSpeaking = false;
+                            }
+                        }, VAD_TIMEOUT);
+                    }
+                };
+            } catch (err) {
+                messages.innerHTML += `<li>Microphone error: ${err.message}</li>`;
+            }
+        }
+
+        function floatTo16BitPCM(input) {
+            const buffer = new ArrayBuffer(input.length * 2);
+            const view = new DataView(buffer);
+            for (let i = 0; i < input.length; i++) {
+                const s = Math.max(-1, Math.min(1, input[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Uint8Array(buffer);
+        }
+
+        // Automatically start on page load
+        window.onload = () => {
+            initAudio();
+        };
+    </script>
+
+
+</body>
+
+</html>

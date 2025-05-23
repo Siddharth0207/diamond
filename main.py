@@ -1,15 +1,12 @@
 import streamlit as st
-from streamlit_chat import message
-import uuid
-from src.audio_utils import _record_until_silence_blocking
-from src.whisper_utils import load_whisper_model, transcribe_audio
-from src.langchain_utils import llm_text_response
-from uuid import UUID, uuid4
+import sounddevice as sd
+import numpy as np
 import asyncio
+import websockets
+import uuid
 
-st.set_page_config(page_title="🗣️ Real-Time STT", layout="centered")
-st.title("🎙️ Real-Time Speech-to-Text with Faster-Whisper")
-
+st.set_page_config(page_title="🗣️ Real-Time STT (WebSocket)", layout="centered")
+st.title("🎙️ Real-Time Speech-to-Text with Faster-Whisper (WebSocket)")
 
 # Assign unique user_id per session
 if "user_id" not in st.session_state:
@@ -17,51 +14,90 @@ if "user_id" not in st.session_state:
 
 st.caption(f"🔑 Session ID: `{st.session_state['user_id']}`")
 
-# Config
-model_size = "base"
-device_type = "cpu"
-silence_thresh = -32
-min_silence_len = 2000
 fs = 16000
+ws_url = f"ws://localhost:8000/ws/audio/{st.session_state['user_id']}"
 
 
-# Async function to handle transcription
-async def handle_transcription(audio_data, fs):
+# Async function to stream audio to WebSocket and handle transcription
+async def stream_audio_to_ws():
     """
-    Handles the transcription of audio data using the Faster-Whisper model.
+    Streams audio to the WebSocket server and handles the transcription and response display.
 
-    This function loads the Whisper model asynchronously and transcribes the provided audio data.
+    This function connects to the WebSocket server, records audio in real-time, and sends the audio data to the server for transcription.
+    It also receives the transcription and LLM response from the server and displays them in the Streamlit app.
 
     Args:
-        audio_data (numpy.ndarray): The recorded audio data as a NumPy array.
-        fs (int): The sampling rate of the audio data in Hz.
+        None
 
     Returns:
-        str: The transcription result as a single string.
+        None
     """
 
-    model = await load_whisper_model(size=model_size, device=device_type)
-    response = await transcribe_audio(model, audio_data, fs)
-    return response
+    st.info("Listening... Speak now.")
+    try:
+        async with websockets.connect(ws_url, ping_interval=None) as ws:
+            audio_buffer = []
+            stop_flag = False
+            # Get the main event loop here
+            loop = asyncio.get_running_loop()
+
+            silence_counter = 0
+            silence_thresh = -32  # dBFS
+            min_silence_chunks = int(2.0 / 0.1)  # 2 seconds of silence at 0.1s per chunk
+
+            def callback(indata, frames, time_info, status):
+                nonlocal silence_counter
+                if status:
+                    print(f"Sounddevice status: {status}")
+                # Calculate dBFS for silence detection
+                audio_np = indata.flatten().astype(np.float32)
+                rms = np.sqrt(np.mean(audio_np ** 2))
+                dbfs = 20 * np.log10(rms / 32768) if rms > 0 else -100
+                if dbfs < silence_thresh:
+                    silence_counter += 1
+                else:
+                    silence_counter = 0
+                # Use the main event loop captured above
+                asyncio.run_coroutine_threadsafe(ws.send(indata.tobytes()), loop)
+                audio_buffer.extend(indata.copy())
+
+            with sd.InputStream(samplerate=fs, channels=1, dtype='int16', callback=callback, blocksize=int(fs * 0.1)):
+                st.info("Recording... Speak now. Stop speaking to end.")
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=0.1)
+                        if msg:
+                            import json
+                            data = json.loads(msg)
+                            if data.get("type") == "partial":
+                                st.write(f"Received {data['received']} bytes...")
+                            elif data.get("type") == "final":
+                                st.success(f"**Transcription:** {data['transcription']}")
+                                st.info(f"**LLM Response:** {data['response']}")
+                                return
+                        # If enough silence detected, break and close connection
+                        if silence_counter >= min_silence_chunks:
+                            break
+                    except asyncio.TimeoutError:
+                        if silence_counter >= min_silence_chunks:
+                            break
+                        continue
+            # After exiting the stream, close the websocket to trigger backend processing
+            await ws.close()
+            # Wait for the final message from backend
+            try:
+                msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                if msg:
+                    data = json.loads(msg)
+                    if data.get("type") == "final":
+                        st.success(f"**Transcription:** {data['transcription']}")
+                        st.info(f"**LLM Response:** {data['response']}")
+            except Exception:
+                st.warning("No final response received from backend.")
+    except Exception as e:
+        st.error(f"WebSocket error: {e}")
+
+
 # Main logic
-if st.button("🎤 Start Listening"): # Display a button to start recording
-    st.info("Listening... Speak now.")  # Inform the user that recording has started
-
-    # Record audio until silence is detected or the maximum duration is reached
-    audio_data, fs = _record_until_silence_blocking(
-        fs=16000,   # Sampling rate in Hz
-        max_duration=180,    # Maximum recording duration in seconds
-        min_silence_len_ms=min_silence_len, # Minimum silence duration to stop recording
-        silence_thresh_db=silence_thresh    # Silence threshold in dBFS
-    )
-
-    st.success("Recording complete. Transcribing...") # Notify the user that recording is complete
-
-
-    # Run the async function using asyncio.run() to await transcribe_audio
-    response = asyncio.run(handle_transcription(audio_data, fs))
-    llm_response = asyncio.run(llm_text_response(response))
-
-    # Display the transcription result in the Streamlit app
-    message(response, is_user=True, key=f"User-{response}")
-    message(llm_response, is_user=False , key=f"LLM-{llm_response}")
+if st.button("🎤 Start Real-Time Listening (WebSocket)"):
+    asyncio.run(stream_audio_to_ws())
