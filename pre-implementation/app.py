@@ -42,10 +42,31 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
+    """
+    Root endpoint for the FastAPI backend.
+
+    Returns:
+        dict: A welcome message indicating the API is running.
+    """
     return ({"message": "this is Root"})
 
 @app.get("/api/summary/{topic}")
 async def get_summary(topic: str):  
+    """
+    Generate two summaries about a given topic using an LLM chain.
+
+    This endpoint uses two LangChain PromptTemplates and a NVIDIA LLM to generate:
+    1. An 8-9 line brief summary about the topic.
+    2. A 2-3 line concise summary about the topic.
+    Both summaries are generated in sequence and returned as a combined response.
+
+    Args:
+        topic (str): The topic to summarize, provided as a path parameter.
+
+    Returns:
+        dict: A dictionary containing the generated summaries.
+    """
+    # Initialize the NVIDIA LLM with desired parameters
     llm = ChatNVIDIA(
         model="meta/llama-3.3-70b-instruct",
         task='chat',
@@ -53,62 +74,88 @@ async def get_summary(topic: str):
         top_p=0.7,
         max_tokens=4096,
     )
-    
+    # Create the first prompt template for a detailed summary
     gen_prompt = PromptTemplate(
         template="You are a very helpful asistant and you will create a brief summary about the {topic} in 8-9 lines",
         input_variables=["topic"]
     )
-    
+    # Create the second prompt template for a concise summary
     final_prompt = PromptTemplate(
         template="You are assistant and you will create a 2-3 line summary about the {topic}", 
         input_variables=["topic"]
     )
-    
+    # Output parser to extract string output from the LLM
     parser = StrOutputParser()
-
+    # Chain for the first summary
     llm_chain_1 = gen_prompt | llm | parser
+    # Chain for the second summary
     llm_chain_2 = final_prompt | llm | parser
+    # Combine both chains in sequence
     parallel_chain = llm_chain_1 | llm_chain_2
+    # Run the chain asynchronously with the topic as input
     response =  parallel_chain.ainvoke({"topic": topic})
-
+    # Return the combined summaries as a dictionary
     return ({"summary": response})
 
 @app.websocket("/ws/audio")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    partial_buffer = bytearray()
-    final_buffer = bytearray()
+    """
+    WebSocket endpoint for real-time audio transcription using WhisperModel.
+
+    Receives audio data in chunks from the client, buffers it, and processes it in segments.
+    Performs speech-to-text transcription on each segment using the Whisper model and sends
+    partial and final transcription results back to the client in real time.
+
+    Args:
+        websocket (WebSocket): The WebSocket connection instance.
+
+    Protocol:
+        - Receives binary audio data (PCM 16-bit, 16kHz) from the client.
+        - Sends JSON messages with partial and final transcriptions.
+        - Handles control messages (e.g., to indicate end of utterance).
+    """
+    await websocket.accept()  # Accept the WebSocket connection
+    partial_buffer = bytearray()  # Buffer for partial audio chunks
+    final_buffer = bytearray()    # Buffer for the full utterance
     try:
         while True:
-            data = await websocket.receive()
+            data = await websocket.receive()  # Receive data from the client
 
             if "bytes" in data:
-                chunk = data["bytes"]
-                partial_buffer += chunk
-                final_buffer += chunk
+                chunk = data["bytes"]  # Audio chunk from client
+                partial_buffer += chunk  # Add to partial buffer
+                final_buffer += chunk    # Add to final buffer
 
+                # If enough audio is buffered, process it
                 if len(partial_buffer) >= CHUNK_BYTES:
                     to_process = partial_buffer[:CHUNK_BYTES]
                     partial_buffer = partial_buffer[CHUNK_BYTES:]
 
+                    # Convert bytes to float32 numpy array for Whisper
                     audio_array = np.frombuffer(to_process, dtype=np.int16).astype(np.float32) / 32768.0
+                    # Transcribe the audio chunk (partial)
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
+                    # Combine all segment texts
                     text = " ".join([s.text for s in segments])
+                    # Send partial transcription to client
                     await websocket.send_text(json.dumps({"type": "partial", "text": text}))
 
             elif "text" in data:
-                control = json.loads(data["text"])
+                control = json.loads(data["text"])  # Control message from client
                 if control.get("final"):
+                    # If client signals end of utterance, process the full buffer
                     audio_array = np.frombuffer(final_buffer, dtype=np.int16).astype(np.float32) / 32768.0
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
                     full_text = " ".join([s.text for s in segments])
+                    # Send final transcription to client
                     await websocket.send_text(json.dumps({"type": "final", "text": full_text}))
+                    # Reset buffers for next utterance
                     partial_buffer = bytearray()
                     final_buffer = bytearray()
 
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(0.001)  # Yield to event loop
 
     except Exception as e:
-        print(f"[ERROR] WebSocket error: {e}")
+        print(f"[ERROR] WebSocket error: {e}")  # Log any errors
     finally:
-        await websocket.close()
+        await websocket.close()  # Ensure the WebSocket is closed
