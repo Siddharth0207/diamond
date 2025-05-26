@@ -6,6 +6,7 @@ import time
 import numpy as np
 from uuid import UUID, uuid4
 import requests
+import json
 from faster_whisper import WhisperModel
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain.prompts import PromptTemplate
@@ -16,17 +17,14 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware # Import for handling CORS
 load_dotenv()
 templates = Jinja2Templates(directory="templates")
-
-
 app = FastAPI()
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
-model = WhisperModel("small", device="cpu", compute_type="int8")
-SAMPLE_RATE = 16000  # Assuming your client sends 16kHz audio
-CHANNELS = 1        # Assuming mono audio
-SAMPLE_WIDTH = 2    # Assuming 16-bit audio (2 bytes per sample)
-CHUNK_DURATION_SEC = 1.0
+model = WhisperModel("base", device="cpu", compute_type="int8")
+SAMPLE_RATE = 16000
+SAMPLE_WIDTH = 2
+CHUNK_DURATION_SEC = 2
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_DURATION_SEC)
 CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
 
@@ -35,7 +33,7 @@ CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (for development purposes)
+    allow_origins=["*"],    # Allows all origins (for development purposes)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,42 +73,42 @@ async def get_summary(topic: str):
 
     return ({"summary": response})
 
-
 @app.websocket("/ws/audio")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    audio_buffer = bytearray() 
+    partial_buffer = bytearray()
+    final_buffer = bytearray()
     try:
         while True:
-            audio_chunk = await websocket.receive_bytes()
-            if not audio_chunk:
-                continue
-            audio_buffer += audio_chunk
+            data = await websocket.receive()
 
-            while len(audio_buffer) >= CHUNK_BYTES:
-                chunk_to_process = audio_buffer[:CHUNK_BYTES]
-                audio_buffer = audio_buffer[CHUNK_BYTES:]
+            if "bytes" in data:
+                chunk = data["bytes"]
+                partial_buffer += chunk
+                final_buffer += chunk
 
-                # Decode PCM
-                audio_array = np.frombuffer(chunk_to_process, dtype=np.int16).astype(np.float32) / 32768.0
+                if len(partial_buffer) >= CHUNK_BYTES:
+                    to_process = partial_buffer[:CHUNK_BYTES]
+                    partial_buffer = partial_buffer[CHUNK_BYTES:]
 
-                # Transcribe
-                segments, _ = model.transcribe(
-                    audio_array,
-                    beam_size=5,
-                    language="en",
-                    vad_filter=True,
-                    vad_parameters={"threshold": 0.5}
-                )
+                    audio_array = np.frombuffer(to_process, dtype=np.int16).astype(np.float32) / 32768.0
+                    segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
+                    text = " ".join([s.text for s in segments])
+                    await websocket.send_text(json.dumps({"type": "partial", "text": text}))
 
-                for segment in segments:
-                    await websocket.send_text(segment.text)
+            elif "text" in data:
+                control = json.loads(data["text"])
+                if control.get("final"):
+                    audio_array = np.frombuffer(final_buffer, dtype=np.int16).astype(np.float32) / 32768.0
+                    segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
+                    full_text = " ".join([s.text for s in segments])
+                    await websocket.send_text(json.dumps({"type": "final", "text": full_text}))
+                    partial_buffer = bytearray()
+                    final_buffer = bytearray()
 
             await asyncio.sleep(0.001)
+
     except Exception as e:
         print(f"[ERROR] WebSocket error: {e}")
     finally:
         await websocket.close()
-
-
-

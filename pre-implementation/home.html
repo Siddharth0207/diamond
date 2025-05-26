@@ -2,94 +2,130 @@
 <html>
 
 <head>
-    <title>WebSocket Audio Stream</title>
+    <title>Voice Agent</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+
+        #chat {
+            max-width: 600px;
+            margin: auto;
+            padding: 10px;
+        }
+
+        .message {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 5px 0;
+        }
+
+        .partial {
+            opacity: 0.6;
+            font-style: italic;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>Real-time Audio Processor</h1>
-    <button onclick="startAudio()">Start Recording</button>
-    <button onclick="stopAudio()">Stop Recording</button>
-    <ul id='messages'>
-    </ul>
+    <h2>Real-time Transcription</h2>
+    <div id="chat"></div>
+
     <script>
         let audioContext, processor, input;
         let ws = null;
-        let isStreaming = false;
-
-        const VAD_SENSITIVITY = 0.01;  // Amplitude threshold for voice
-        const VAD_TIMEOUT = 500;       // ms of silence before stopping
-
-        let vadTimer = null;
         let isSpeaking = false;
-        const messages = document.getElementById('messages');
+        let vadTimer = null;
+        let audioBuffer = [];
 
-        async function initAudio() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const VAD_SENSITIVITY = 0.01;
+        const VAD_TIMEOUT = 1000;
+        const SAMPLE_RATE = 16000;
 
-                audioContext = new AudioContext({ sampleRate: 16000 });
-                input = audioContext.createMediaStreamSource(stream);
+        function appendMessage(text, isPartial = false, id = null) {
+            if (!text.trim()) return; // ⬅️ Skip empty/whitespace-only messages
 
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
-                input.connect(processor);
-                processor.connect(audioContext.destination);
-
-                ws = new WebSocket("ws://localhost:8000/ws/audio");
-                ws.onmessage = (event) => {
-                    messages.innerHTML += `<li>Transcription: ${event.data}</li>`;
-                };
-                ws.onopen = () => {
-                    messages.innerHTML += "<li>WebSocket connected. Listening for speech...</li>";
-                };
-                ws.onerror = () => messages.innerHTML += "<li>WebSocket error</li>";
-                ws.onclose = () => messages.innerHTML += "<li>WebSocket closed</li>";
-
-                processor.onaudioprocess = (e) => {
-                    const inputData = e.inputBuffer.getChannelData(0);
-                    const max = Math.max(...inputData.map(Math.abs));
-
-                    if (max > VAD_SENSITIVITY) {
-                        if (!isSpeaking) {
-                            messages.innerHTML += "<li>Speech started</li>";
-                            isSpeaking = true;
-                        }
-
-                        const int16Buffer = floatTo16BitPCM(inputData);
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(int16Buffer);
-                        }
-
-                        clearTimeout(vadTimer);
-                        vadTimer = setTimeout(() => {
-                            if (isSpeaking) {
-                                messages.innerHTML += "<li>Speech ended</li>";
-                                isSpeaking = false;
-                            }
-                        }, VAD_TIMEOUT);
-                    }
-                };
-            } catch (err) {
-                messages.innerHTML += `<li>Microphone error: ${err.message}</li>`;
+            const chat = document.getElementById('chat');
+            if (id && document.getElementById(id)) {
+                document.getElementById(id).innerText = text;
+                return;
             }
+            const div = document.createElement("div");
+            div.className = "message" + (isPartial ? " partial" : "");
+            div.innerText = text;
+            if (id) div.id = id;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
         }
 
-        function floatTo16BitPCM(input) {
-            const buffer = new ArrayBuffer(input.length * 2);
-            const view = new DataView(buffer);
-            for (let i = 0; i < input.length; i++) {
-                const s = Math.max(-1, Math.min(1, input[i]));
-                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        function floatTo16BitPCM(float32Array) {
+            const int16 = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-            return new Uint8Array(buffer);
+            return int16;
         }
 
-        // Automatically start on page load
+        function sendAudio(isFinal = false) {
+            if (!ws || ws.readyState !== WebSocket.OPEN || audioBuffer.length === 0) return;
+
+            const pcm = new Int16Array(audioBuffer);
+            ws.send(pcm.buffer);  // send as ArrayBuffer
+            if (isFinal) {
+                ws.send(JSON.stringify({ final: true }));
+            }
+
+            audioBuffer = [];
+        }
+
+        async function startAudio() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+            input = audioContext.createMediaStreamSource(stream);
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+            input.connect(processor);
+            processor.connect(audioContext.destination);
+
+            ws = new WebSocket("ws://localhost:8000/ws/audio");
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === "partial") {
+                    appendMessage(data.text, true, "partial");
+                } else if (data.type === "final") {
+                    document.getElementById("partial")?.remove();
+                    appendMessage(data.text, false);
+                }
+            };
+
+            processor.onaudioprocess = (e) => {
+                const inputData = e.inputBuffer.getChannelData(0);
+                const max = Math.max(...inputData.map(Math.abs));
+                const pcm = floatTo16BitPCM(inputData);
+                audioBuffer.push(...pcm);
+
+                if (max > VAD_SENSITIVITY) {
+                    if (!isSpeaking) isSpeaking = true;
+                    clearTimeout(vadTimer);
+                    vadTimer = setTimeout(() => {
+                        isSpeaking = false;
+                        sendAudio(true);
+                    }, VAD_TIMEOUT);
+                }
+            };
+
+            setInterval(() => {
+                if (isSpeaking) sendAudio(false);
+            }, 2000);
+        }
+
         window.onload = () => {
-            initAudio();
+            startAudio();
         };
     </script>
-
-
 </body>
 
 </html>
