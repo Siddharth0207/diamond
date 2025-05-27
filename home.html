@@ -36,11 +36,11 @@
 
     <script>
         // Audio and WebSocket variables
-        let audioContext, processor, input;
-        let ws = null;
-        let isSpeaking = false;
-        let vadTimer = null;
-        let audioBuffer = [];
+        let audioContext, processor, input; // Audio processing variables
+        let ws = null;  // WebSocket connection for real-time transcription
+        let isSpeaking = false; // Flag to track if user is currently speaking
+        let vadTimer = null;    // Timer for Voice Activity Detection (VAD)
+        let audioBuffer = [];   // Buffer to hold audio samples for sending
 
         // Voice Activity Detection (VAD) and audio settings
         const VAD_SENSITIVITY = 0.01; // Threshold for detecting speech
@@ -60,7 +60,7 @@
             // Create a new message div
             const div = document.createElement("div");
             div.className = "message" + (isPartial ? " partial" : "");
-            div.innerText = text;
+            div.innerText = text;   // Set the message text
             if (id) div.id = id;
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight; // Scroll to bottom
@@ -70,15 +70,15 @@
         function floatTo16BitPCM(float32Array) {
             const int16 = new Int16Array(float32Array.length);
             for (let i = 0; i < float32Array.length; i++) {
-                const s = Math.max(-1, Math.min(1, float32Array[i]));
-                int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                const s = Math.max(-1, Math.min(1, float32Array[i]));   // Clamp to [-1, 1]
+                int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF; // Convert to 16-bit signed integer
             }
             return int16;
         }
 
         // Send audio data to the server via WebSocket
         function sendAudio(isFinal = false) {
-            if (!ws || ws.readyState !== WebSocket.OPEN || audioBuffer.length === 0) return;
+            if (!ws || ws.readyState !== WebSocket.OPEN || audioBuffer.length === 0) return;    // Ensure WebSocket is open and buffer is not empty
 
             const pcm = new Int16Array(audioBuffer);
             ws.send(pcm.buffer);  // Send as ArrayBuffer
@@ -94,13 +94,13 @@
             // Request microphone access
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-            input = audioContext.createMediaStreamSource(stream);
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
-            input.connect(processor);
+            input = audioContext.createMediaStreamSource(stream);   // Create audio input from microphone stream
+            processor = audioContext.createScriptProcessor(4096, 1, 1); // Create audio processor for real-time processing
+            input.connect(processor);   // Connect input to processor
             processor.connect(audioContext.destination);
 
             // Connect to FastAPI WebSocket endpoint
-            ws = new WebSocket("ws://localhost:8000/ws/audio");
+            ws = new WebSocket("ws://localhost:8000/api/v1/audio/ws/audio");
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 // Display partial transcription

@@ -3,7 +3,7 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 import os 
-from src.whisper_utils import transcribe_audio
+from services.whisper_utils import transcribe_audio
 
 
 load_dotenv()

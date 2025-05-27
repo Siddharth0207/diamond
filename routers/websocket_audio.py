@@ -1,23 +1,11 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-import asyncio
-import os
-import sys 
-import time 
-import numpy as np
-from uuid import UUID, uuid4
-import requests
-import json
 from faster_whisper import WhisperModel
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langchain.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from dotenv import load_dotenv
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware # Import for handling CORS
-load_dotenv()
-templates = Jinja2Templates(directory="templates")
-app = FastAPI()
+import json
+import numpy as np
+import asyncio
+from fastapi import APIRouter
+
+router = APIRouter()
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -29,77 +17,7 @@ CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_DURATION_SEC)
 CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
 
 
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],    # Allows all origins (for development purposes)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.get("/")
-async def root():
-    """
-    Root endpoint for the FastAPI backend.
-
-    Returns:
-        dict: A welcome message indicating the API is running.
-    """
-    return ({"message": "this is Root"})
-
-
-# This will be used for chat purpose if the user wants to chat instead of Voice  
-@app.get("/api/summary/{topic}")
-async def get_summary(topic: str):  # function name can be changed to something more descriptive later on based on purpose
-    """
-    Generate two summaries about a given topic using an LLM chain.
-
-    This endpoint uses two LangChain PromptTemplates and a NVIDIA LLM to generate:
-    1. An 8-9 line brief summary about the topic.
-    2. A 2-3 line concise summary about the topic.
-    Both summaries are generated in sequence and returned as a combined response.
-
-    Args:
-        topic (str): The topic to summarize, provided as a path parameter.
-
-    Returns:
-        dict: A dictionary containing the generated summaries.
-    """
-    # Initialize the NVIDIA LLM with desired parameters
-    llm = ChatNVIDIA(
-        model="meta/llama-3.3-70b-instruct",
-        task='chat',
-        temperature=0.6,
-        top_p=0.7,
-        max_tokens=4096,
-    )
-    # Create the first prompt template for a detailed summary
-    gen_prompt = PromptTemplate(
-        template="You are a very helpful asistant and you will create a brief summary about the {topic} in 8-9 lines",  # Should change the Prompt Template Later On 
-        input_variables=["topic"]
-    )
-    # Create the second prompt template for a concise summary
-    final_prompt = PromptTemplate(
-        template="You are assistant and you will create a 2-3 line summary about the {topic} and also give a conclusion about the topic" , 
-        input_variables=["topic"]
-    )
-    # Output parser to extract string output from the LLM
-    parser = StrOutputParser()
-    # Chain for the first summary
-    llm_chain_1 = gen_prompt | llm | parser
-    # Chain for the second summary
-    llm_chain_2 = final_prompt | llm | parser
-    # Combine both chains in sequence
-    parallel_chain = llm_chain_1 | llm_chain_2
-    # Run the chain asynchronously with the topic as input
-    response =  parallel_chain.ainvoke({"topic": topic})
-    # Return the combined summaries as a dictionary
-    return ({"summary": response})
-
-@app.websocket("/ws/audio")
+@router.websocket("/ws/audio")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for real-time audio transcription using WhisperModel.
