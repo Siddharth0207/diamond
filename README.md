@@ -1,78 +1,132 @@
-# Voice Agent for Sales and Chat
+try:
+response = requests.post(f"http://localhost:8000/start_recording/{st.session_state['user_id']}")
 
-A Python-based voice agent designed for sales and chat applications. This project leverages FastAPI, WebSockets, and advanced audio processing to provide real-time voice interaction capabilities. It integrates with language models and audio transcription services to deliver intelligent conversational experiences.
+        # Print raw response to debug
+        st.code(response.text)
+        st.code(response.status_code)
 
-## Features
 
-- Real-time voice chat via WebSockets
-- Audio transcription using Whisper
-- Integration with language models (LangChain)
-- Modular service and router architecture
-- Ready for deployment with Uvicorn
+        response_data = response.json()
+        st.success("Done!")
+        st.markdown(f"**📝 Transcription:** `{response}`")
+    except Exception as e:
+        st.error(f"Error calling FastAPI: {e}")
 
-## Project Structure
+# 🎙️ Real-Time Speech-to-Text with Faster-Whisper
 
-```text
-app.py                # Main application entry point
-routers/              # API routers (e.g., summary, websocket_audio)
-services/             # Service modules (audio, langchain, whisper)
-home.html             # Example HTML client
-requirements.txt      # Python dependencies
-setup.py, pyproject.toml # Packaging and metadata
-```
-
-## Installation
-
-1. Clone the repository:
-
-   ```powershell
-   git clone <your-repo-url>
-   cd diamond
-   ```
-
-2. (Optional) Create and activate a virtual environment:
-
-   ```powershell
-   python -m venv dia
-   .\dia\Scripts\activate
-   ```
-
-3. Install dependencies using uv:
-
-   ```powershell
-   uv pip install -r requirements.txt
-   ```
-
-## Usage
-
-Start the FastAPI server with Uvicorn:
-
-```powershell
-uvicorn app:app --reload
-```
-
-Open `home.html` in your browser for a sample client interface.
-
-## Configuration
-
-- Service and model configurations can be adjusted in the `services/` and `routers/` modules.
-- For advanced settings, edit `pyproject.toml` or `setup.py` as needed.
-
-## License
-
-This project is licensed under the terms of the LICENSE file in this repository.
-
-## Contributing
-
-Pull requests and issues are welcome! Please open an issue to discuss your ideas or report bugs.
-
-## Acknowledgements
-
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [Uvicorn](https://www.uvicorn.org/)
-- [OpenAI Whisper](https://github.com/openai/whisper)
-- [LangChain](https://github.com/hwchase17/langchain)
+This project is a real-time speech-to-text (STT) application built using the [Faster-Whisper](https://github.com/guillaumekln/faster-whisper) library for transcription and [Streamlit](https://streamlit.io/) for the user interface. It records audio, detects silence to stop recording, and transcribes the audio into text using a Whisper model.
 
 ---
 
-For more information, see the code and comments in each module.
+## 🚀 Features
+
+- **Real-Time Audio Recording**: Records audio until silence is detected or a maximum duration is reached.
+- **Speech-to-Text Transcription**: Uses Faster-Whisper for accurate and efficient transcription.
+- **Streamlit UI**: Provides an interactive and user-friendly interface for recording and viewing transcriptions.
+- **Customizable Parameters**: Allows configuration of model size, silence threshold, and more.
+
+---
+
+## 🛠️ Project Structure
+
+GitHub Copilot
+Here is a sample README.md file for your project:
+
+voice_agent/
+├── app.py # Main application file (Streamlit UI)
+├── audio_utils.py # Handles audio recording and silence detection
+├── whisper_utils.py # Loads Whisper model and handles transcription
+├── requirements.txt # Python dependencies
+└── README.md # Project documentation
+
+---
+
+## ⚙️ Configuration
+
+The following parameters can be configured in `app.py`:
+
+- **`model_size`**: The size of the Whisper model to use (e.g., `"tiny"`, `"base"`, `"large"`).
+- **`device_type`**: The device to run the model on (`"cpu"` or `"cuda"` for GPU).
+- **`silence_thresh`**: The silence threshold in dBFS to stop recording.
+- **`min_silence_len`**: The minimum duration of silence (in milliseconds) to stop recording.
+- **`fs`**: The sampling rate for audio recording (default: `16000` Hz).
+
+---
+
+## 🖥️ How It Works
+
+1. **Start Recording**:
+
+   - Click the "🎤 Start Listening" button in the Streamlit app.
+   - The app listens for audio input and stops recording when silence is detected or the maximum duration is reached.
+
+2. **Transcription**:
+   - The recorded audio is passed to the Faster-Whisper model for transcription.
+   - The transcription result is displayed in the Streamlit app.
+
+---
+
+## 🛠️ Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/voice_agent.git
+   cd voice_agent
+   ```
+
+2.Create a virtual environment and activate it:
+python -m venv venv
+source venv/bin/activate # On Windows: venv\Scripts\activate
+
+3. Install dependencies:
+   pip install -r requirements.txt
+
+4. Install additional system dependencies for audio processing:
+
+   > FFmpeg: Required for handling audio files.
+   > On Ubuntu: sudo apt install ffmpeg
+   > On Windows: Download and install from FFmpeg.org.
+
+▶️ Usage
+Run the Streamlit app:
+
+Open the app in your browser (default: http://localhost:8501).
+
+Click the "🎤 Start Listening" button to start recording and transcribing audio.
+
+📂 Key Files
+app.py
+The main application file that handles the Streamlit UI and integrates audio recording and transcription.
+audio_utils.py
+Contains functions for recording audio and detecting silence:
+\_record_until_silence_blocking: Records audio until silence is detected or the maximum duration is reached.
+whisper_utils.py
+Contains functions for loading the Whisper model and transcribing audio:
+load_whisper_model: Loads the Faster-Whisper model.
+transcribe_audio: Transcribes audio data using the Whisper model.
+🛠️ Customization
+You can customize the following parameters in app.py:
+
+Model Size: Change the model_size variable to use a different Whisper model size (e.g., "tiny", "base", "large").
+Device: Set device_type to "cuda" for GPU acceleration (if available).
+Silence Threshold: Adjust silence_thresh to fine-tune silence detection.
+Minimum Silence Length: Modify min_silence_len to change how long silence must last to stop recording.
+🧪 Example Output
+1.Recording:
+The app listens for audio input and stops when silence is detected. 2. Transcription:
+The app displays the transcribed text in the UI.
+
+📝 Transcription: "Hello, this is a test of the real-time speech-to-text application."
+
+The transcribed text is displayed in the app:
+🛡️ Requirements
+Python 3.8 or higher
+FFmpeg (for audio processing)
+📜 License
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+    🤝 Contributing
+        Contributions are welcome! Feel free to open issues or submit pull requests.
+
+    📧 Contact
+        For questions or support, please contact siddharthkushwaha33@gmail.com.
