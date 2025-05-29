@@ -14,6 +14,8 @@
             max-width: 600px;
             margin: auto;
             padding: 10px;
+            background-color: #dff0d8;
+            border-left: 4px solid #3c763d;
         }
 
         .message {
@@ -31,16 +33,38 @@
 </head>
 
 <body>
-    <h2>Real-time Transcription</h2>
+    <h2>Let me find you a Diamond for you!</h2>
     <div id="chat"></div> <!-- Container for displaying transcriptions -->
 
     <script>
         // Audio and WebSocket variables
         let audioContext, processor, input; // Audio processing variables
-        let ws = null;  // WebSocket connection for real-time transcription
+        let ws = null;
+        function playStreamedTTS() {
+            if (ttsAudioChunks.length === 0) return;
+
+            const rawData = ttsAudioChunks.shift(); // get first chunk
+            const audioBuffer = ttsAudioContext.createBuffer(1, rawData.length / 2, 22050);
+            const channelData = audioBuffer.getChannelData(0);
+
+            for (let i = 0; i < rawData.length; i += 2) {
+                const sample = (rawData[i + 1] << 8) | (rawData[i] & 0xff); // Little-endian
+                channelData[i / 2] = sample / 32768.0; // 16-bit PCM normalized
+            }
+
+            const source = ttsAudioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(ttsAudioContext.destination);
+            source.start();
+
+            // Schedule next chunk
+            setTimeout(playStreamedTTS, audioBuffer.duration * 1000);
+        }  // WebSocket connection for real-time transcription
         let isSpeaking = false; // Flag to track if user is currently speaking
         let vadTimer = null;    // Timer for Voice Activity Detection (VAD)
         let audioBuffer = [];   // Buffer to hold audio samples for sending
+        let ttsAudioChunks = [];
+        let ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
 
         // Voice Activity Detection (VAD) and audio settings
         const VAD_SENSITIVITY = 0.01; // Threshold for detecting speech
@@ -88,59 +112,98 @@
 
             audioBuffer = []; // Clear buffer after sending
         }
+        function speakQuestionAndListen(questionText) {
+            const utterance = new SpeechSynthesisUtterance(questionText);
+            utterance.lang = 'en-US';
+            speechSynthesis.cancel(); // Important: reset any prior utterances
+            speechSynthesis.speak(utterance);
+        }
 
-        // Start capturing audio and set up WebSocket
         async function startAudio() {
-            // Request microphone access
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-            input = audioContext.createMediaStreamSource(stream);   // Create audio input from microphone stream
-            processor = audioContext.createScriptProcessor(4096, 1, 1); // Create audio processor for real-time processing
-            input.connect(processor);   // Connect input to processor
+            input = audioContext.createMediaStreamSource(stream);
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+            input.connect(processor);
             processor.connect(audioContext.destination);
 
-            // Connect to FastAPI WebSocket endpoint
-            ws = new WebSocket("ws://localhost:8000/api/v1/audio/ws/audio");
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                // Display partial transcription
-                if (data.type === "partial") {
-                    appendMessage(data.text, true, "partial");
-                } else if (data.type === "final") {
-                    // Remove partial and display final transcription
-                    document.getElementById("partial")?.remove();
-                    appendMessage(data.text, false);
-                }
-            };
-
-            // Process audio in real time
             processor.onaudioprocess = (e) => {
-                const inputData = e.inputBuffer.getChannelData(0); // Get audio samples
-                const max = Math.max(...inputData.map(Math.abs));  // Find max amplitude
-                const pcm = floatTo16BitPCM(inputData);            // Convert to 16-bit PCM
-                audioBuffer.push(...pcm);                          // Add to buffer
+                const inputData = e.inputBuffer.getChannelData(0);
+                const max = Math.max(...inputData.map(Math.abs));
+                const pcm = floatTo16BitPCM(inputData);
+                audioBuffer.push(...pcm);
 
-                // Voice Activity Detection (VAD)
                 if (max > VAD_SENSITIVITY) {
-                    if (!isSpeaking) isSpeaking = true; // Start of speech
+                    if (!isSpeaking) isSpeaking = true;
                     clearTimeout(vadTimer);
                     vadTimer = setTimeout(() => {
                         isSpeaking = false;
-                        sendAudio(true); // Send final chunk when speech ends
+                        sendAudio(true);
                     }, VAD_TIMEOUT);
                 }
             };
 
-            // Periodically send audio if speaking
             setInterval(() => {
                 if (isSpeaking) sendAudio(false);
             }, 2000);
+
+            connectWebSocket(); // connect WS after mic starts
         }
 
-        // Start everything when the page loads
+        function connectWebSocket() {
+            ws = new WebSocket("ws://localhost:8000/api/v1/audio/ws/audio");
+
+            ws.onopen = () => {
+                console.log("WebSocket connected.");
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === "string") {
+                    const data = JSON.parse(event.data);
+                    if (data.type === "partial") {
+                        appendMessage(data.text, true, "partial");
+                    } else if (data.type === "final") {
+                        document.getElementById("partial")?.remove();
+                        appendMessage(data.text);
+                    } else if (data.type === "entities") {
+                        appendMessage(`Entities: ${JSON.stringify(data.data)}`);
+                    } else if (data.type === "tts_end") {
+                        console.log("TTS playback complete.");
+                    }
+                } else if (event.data instanceof Blob) {
+                    // Handle raw audio chunk (binary)
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const pcmBytes = new Uint8Array(reader.result);
+                        ttsAudioChunks.push(pcmBytes);
+                        if (ttsAudioChunks.length === 1) {
+                            playStreamedTTS(); // kick off playback if idle
+                        }
+                    };
+                    reader.readAsArrayBuffer(event.data);
+                }
+            };
+
+            ws.onclose = () => {
+                console.warn("WebSocket closed. Retrying in 2s...");
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+        }
+
         window.onload = () => {
             startAudio();
+            speakQuestionAndListen("What type of Diamond do you want?");
         };
+        window.onbeforeunload = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close(1000, "Page unload");
+            }
+        };
+
     </script>
 </body>
 

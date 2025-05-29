@@ -3,9 +3,14 @@ from faster_whisper import WhisperModel
 import json
 import numpy as np
 import asyncio
+import base64
 from fastapi import APIRouter
+from .nlu_engine import extract_entities
+from .tts_engine import synthesize_streaming_chunks
+from uuid import uuid4
 
 router = APIRouter()
+active_sessions = {}  # Dictionary to track active WebSocket sessions
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -35,6 +40,9 @@ async def websocket_endpoint(websocket: WebSocket):
         - Handles control messages (e.g., to indicate end of utterance).
     """
     await websocket.accept()  # Accept the WebSocket connection
+    # === Assign session ID ===
+    session_id = str(uuid4())
+    active_sessions[session_id] = {"history": []}
     partial_buffer = bytearray()  # Buffer for partial audio chunks
     final_buffer = bytearray()    # Buffer for the full utterance
     try:
@@ -58,7 +66,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Combine all segment texts
                     text = " ".join([s.text for s in segments])
                     # Send partial transcription to client
-                    await websocket.send_text(json.dumps({"type": "partial", "text": text}))
+                    await websocket.send_text(json.dumps(
+                        {"type": "partial",
+                        "session_id": session_id,
+                        "text": text})
+                        )
 
             elif "text" in data:
                 control = json.loads(data["text"])  # Control message from client
@@ -66,12 +78,34 @@ async def websocket_endpoint(websocket: WebSocket):
                     # If client signals end of utterance, process the full buffer
                     audio_array = np.frombuffer(final_buffer, dtype=np.int16).astype(np.float32) / 32768.0
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
-                    full_text = " ".join([s.text for s in segments])
-                    # Send final transcription to client
-                    await websocket.send_text(json.dumps({"type": "final", "text": full_text}))
+                    full_text = " ".join([s.text for s in segments]).strip()
+
+                    if full_text:
+                        # Send final transcription to client
+                        # === Add this: Extract and send entities ===
+                        entities = extract_entities(full_text)
+                        await websocket.send_text(json.dumps(
+                            {"type": "entities",
+                            "session_id": session_id, 
+                            "data": entities})
+                            )
+                        # === Generate TTS Response (Follow-up, etc.) ===
+                        followup_text = f"Got it. You said: {full_text}"
+                        # Send streaming TTS audio in chunks
+                        for chunk in synthesize_streaming_chunks(followup_text, sample_rate=22050):
+                            await websocket.send_bytes(chunk)
+                            await asyncio.sleep(0.01)  # small delay to simulate natural streaming
+
+                        await websocket.send_text(json.dumps({
+                            "type": "tts_audio",
+                            "session_id": session_id,
+                            "text": followup_text
+                        }))
+
                     # Reset buffers for next utterance
                     partial_buffer = bytearray()
                     final_buffer = bytearray()
+                    
 
             await asyncio.sleep(0.001)  # Yield to event loop
 
