@@ -253,5 +253,5 @@ voice-agent/
 
 ---
 
-If you want, I can help scaffold the code for each part (FastAPI WebSocket, Redis memory, Coqui integration, etc.) based on your current stack. Would you like to start with the real-time FastAPI + WebSocket STT ingestion?
+
 
