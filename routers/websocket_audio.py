@@ -1,16 +1,18 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from faster_whisper import WhisperModel
+
 import json
 import numpy as np
 import asyncio
 import base64
 from fastapi import APIRouter
-from .nlu_engine import extract_entities
-from .tts_engine import synthesize_streaming_chunks
+
+from .nlu_engine import extract_entities  
 from uuid import uuid4
+from redis_manager import RedisSessionManager
 
 router = APIRouter()
-active_sessions = {}  # Dictionary to track active WebSocket sessions
+redis_manager = RedisSessionManager()
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -42,7 +44,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()  # Accept the WebSocket connection
     # === Assign session ID ===
     session_id = str(uuid4())
-    active_sessions[session_id] = {"history": []}
+    redis_manager.set_session(session_id, {"history": []})
     partial_buffer = bytearray()  # Buffer for partial audio chunks
     final_buffer = bytearray()    # Buffer for the full utterance
     try:
@@ -79,22 +81,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     audio_array = np.frombuffer(final_buffer, dtype=np.int16).astype(np.float32) / 32768.0
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
                     full_text = " ".join([s.text for s in segments]).strip()
+                    
 
                     if full_text:
-                        # Send final transcription to client
-                        # === Add this: Extract and send entities ===
-                        entities = extract_entities(full_text)
-                        await websocket.send_text(json.dumps(
-                            {"type": "entities",
-                            "session_id": session_id, 
-                            "data": entities})
-                            )
+                        # Optionally update session with final transcript/history
+                        session = redis_manager.get_session(session_id)
+                        session.setdefault("history", []).append(full_text)
+                        redis_manager.set_session(session_id, session)
                         # === Generate TTS Response (Follow-up, etc.) ===
                         followup_text = f"Got it. You said: {full_text}"
-                        # Send streaming TTS audio in chunks
-                        for chunk in synthesize_streaming_chunks(followup_text, sample_rate=22050):
-                            await websocket.send_bytes(chunk)
-                            await asyncio.sleep(0.01)  # small delay to simulate natural streaming
+                       
 
                         await websocket.send_text(json.dumps({
                             "type": "tts_audio",
@@ -111,5 +107,5 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except Exception as e:
         print(f"[ERROR] WebSocket error: {e}")  # Log any errors
-    finally:
         await websocket.close()  # Ensure the WebSocket is closed
+        redis_manager.delete_session(session_id)
