@@ -1,18 +1,15 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from faster_whisper import WhisperModel
-
 import json
 import numpy as np
 import asyncio
 import base64
 from fastapi import APIRouter
-
 from .nlu_engine import extract_entities  
 from uuid import uuid4
-from redis_manager import RedisSessionManager
 
 router = APIRouter()
-redis_manager = RedisSessionManager()
+active_sessions = {}  # Dictionary to track active WebSocket sessions
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -44,7 +41,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()  # Accept the WebSocket connection
     # === Assign session ID ===
     session_id = str(uuid4())
-    redis_manager.set_session(session_id, {"history": []})
+    active_sessions[session_id] = {"history": []}
     partial_buffer = bytearray()  # Buffer for partial audio chunks
     final_buffer = bytearray()    # Buffer for the full utterance
     try:
@@ -84,10 +81,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     
 
                     if full_text:
-                        # Optionally update session with final transcript/history
-                        session = redis_manager.get_session(session_id)
-                        session.setdefault("history", []).append(full_text)
-                        redis_manager.set_session(session_id, session)
+                        # Send final transcription to client
+                        # === Add this: Extract and send entities ===
+                        #entities = extract_entities(full_text)
+                        #await websocket.send_text(json.dumps(
+                            #{"type": "entities",
+                            #"session_id": session_id, 
+                            #"data": entities})
+                            #)
                         # === Generate TTS Response (Follow-up, etc.) ===
                         followup_text = f"Got it. You said: {full_text}"
                        
@@ -107,5 +108,5 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except Exception as e:
         print(f"[ERROR] WebSocket error: {e}")  # Log any errors
+    finally:
         await websocket.close()  # Ensure the WebSocket is closed
-        redis_manager.delete_session(session_id)
