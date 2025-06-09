@@ -1,33 +1,38 @@
-import re
+import spacy
+from spacy.matcher import PhraseMatcher
+from typing import Dict, List
 
-def extract_entities(text: str) -> dict:
-    entities = {}
-    # Handle updates like "change clarity to SI1"
-    if match := re.search(r"(change|set|update)\s+(clarity|carat|color|price|shape)\s+(to)?\s*([a-zA-Z0-9.]+)", text.lower()):
-        key = match.group(2)
-        value = match.group(4)
-        entities[key] = value.upper() if key in {"clarity", "color"} else value
 
-    # Carat (float)
-    if match := re.search(r"(\d+(\.\d+)?)\s*carat", text.lower()):
-        entities["carat"] = float(match.group(1))
+class DiamondEntityExtractor:
+    def __init__(self):
+        self.nlp = spacy.load("en_core_web_sm")
+        self.matcher = PhraseMatcher(self.nlp.vocab, attr="TEXT")
+        self.entity_definitions = {
+            "Clarity": ['VVS2', 'SI2', 'I1', 'I3', 'SI1', 'VS1', 'VVS1', 'I2', 'VS2', 'IF', 'SI3', 'FL'],
+            "Color": ['M', 'i', 'w-x', 'M+', 'x', 'l', 'N', 'L+', 'f', 'J', 'y', 'G', 'O', 'Y-Z', 'u-v', 'z',
+                      'E+', 'p', 'j', 'U-V', 'F+', 'm', 'I', 'k', 'J+', 'g', 'H+', 'I+', 'q', 'e', 'o-p', 'N+',
+                      'K+', 't', 'd', 'W-X', 'Q-R', 'v', 'O-P', 'D', 's-t', 'q-r', 'r', 'u', 'w', 's', 'y-z',
+                      'n', 'L', 'D+', 'H', 'F', 'K', 'E', 'G+', 'S-T'],
+            "Cut": ['VG', 'EX', 'P', 'G', 'F'],
+            "Polish": ['P', 'G', 'F', 'VG', 'EX'],
+            "Lab": ['IOD', 'HRD', 'GIA']
+        }
+        self._register_patterns()
 
-    # Clarity
-    if match := re.search(r"\b(IF|VVS1|VVS2|VS1|VS2|SI1|SI2)\b", text.upper()):
-        entities["clarity"] = match.group(1)
+    def _register_patterns(self):
+        for label, terms in self.entity_definitions.items():
+            patterns = [self.nlp.make_doc(term) for term in terms]
+            self.matcher.add(label, patterns)
 
-    # Color
-    if match := re.search(r"\b([D-K])\b", text.upper()):
-        entities["color"] = match.group(1)
+    def extract_entities(self, text: str) -> Dict[str, List[str]]:
+        doc = self.nlp(text)
+        matches = self.matcher(doc)
+        results = {}
 
-    # Price
-    if match := re.search(r"under\s*\$?(\d+)", text.lower()):
-        entities["price"] = {"max": int(match.group(1))}
-    elif match := re.search(r"over\s*\$?(\d+)", text.lower()):
-        entities["price"] = {"min": int(match.group(1))}
+        for match_id, start, end in matches:
+            label = self.nlp.vocab.strings[match_id]
+            value = doc[start:end].text.upper()
+            results.setdefault(label, set()).add(value)
 
-    # Shape
-    if match := re.search(r"\b(round|oval|princess|emerald|pear|marquise|cushion|radiant)\b", text.lower()):
-        entities["shape"] = match.group(1)
-
-    return entities
+        # Convert sets to sorted lists
+        return {key: sorted(list(val)) for key, val in results.items()}

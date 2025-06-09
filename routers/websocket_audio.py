@@ -5,11 +5,12 @@ import numpy as np
 import asyncio
 import base64
 from fastapi import APIRouter
-from .nlu_engine import extract_entities  
+from .nlu_engine import DiamondEntityExtractor 
 from uuid import uuid4
+from redis_manager import RedisSessionManager
 
 router = APIRouter()
-active_sessions = {}  # Dictionary to track active WebSocket sessions
+redis_manager = RedisSessionManager()
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -25,6 +26,7 @@ CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for real-time audio transcription using WhisperModel.
+    Uses Redis for all session state to ensure safe, concurrent, multi-user support.
 
     Receives audio data in chunks from the client, buffers it, and processes it in segments.
     Performs speech-to-text transcription on each segment using the Whisper model and sends
@@ -39,11 +41,14 @@ async def websocket_endpoint(websocket: WebSocket):
         - Handles control messages (e.g., to indicate end of utterance).
     """
     await websocket.accept()  # Accept the WebSocket connection
+
     # === Assign session ID ===
     session_id = str(uuid4())
-    active_sessions[session_id] = {"history": []}
+    # Initialize session in Redis with empty history
+    redis_manager.set_session(session_id, {"history": []})
     partial_buffer = bytearray()  # Buffer for partial audio chunks
     final_buffer = bytearray()    # Buffer for the full utterance
+
     try:
         while True:
             data = await websocket.receive()  # Receive data from the client
@@ -64,6 +69,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
                     # Combine all segment texts
                     text = " ".join([s.text for s in segments])
+
                     # Send partial transcription to client
                     await websocket.send_text(json.dumps(
                         {"type": "partial",
@@ -73,6 +79,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif "text" in data:
                 control = json.loads(data["text"])  # Control message from client
+
                 if control.get("final"):
                     # If client signals end of utterance, process the full buffer
                     audio_array = np.frombuffer(final_buffer, dtype=np.int16).astype(np.float32) / 32768.0
@@ -81,8 +88,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     
 
                     if full_text:
+                        # Update session history in Redis
+                        session = redis_manager.get_session(session_id)
+                        session.setdefault("history", []).append(full_text)
+                        redis_manager.set_session(session_id, session)
                         # Send final transcription to client
-                        # === Add this: Extract and send entities ===
+                        # === Add this: Extract and send entities === #
                         #entities = extract_entities(full_text)
                         #await websocket.send_text(json.dumps(
                             #{"type": "entities",
@@ -109,4 +120,5 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"[ERROR] WebSocket error: {e}")  # Log any errors
     finally:
+        redis_manager.delete_session(session_id)
         await websocket.close()  # Ensure the WebSocket is closed

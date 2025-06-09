@@ -92,11 +92,11 @@ Here’s a **step-by-step approach** broken into **phases**:
 
 ### Tools and Infra
 
-* **Backend:** FastAPI + WebSocket + Gunicorn + Uvicorn
-* **Frontend:** HTML/JS (or React) + WebSocket client + Recorder.js + VAD
-* **Infra:** Docker, Redis, and possibly Kubernetes (later)
-* **Logging:** Loguru or Sentry
-* **Monitoring:** Prometheus + Grafana
+- **Backend:** FastAPI + WebSocket + Gunicorn + Uvicorn
+- **Frontend:** HTML/JS (or React) + WebSocket client + Recorder.js + VAD
+- **Infra:** Docker, Redis, and possibly Kubernetes (later)
+- **Logging:** Loguru or Sentry
+- **Monitoring:** Prometheus + Grafana
 
 ---
 
@@ -104,111 +104,119 @@ Here’s a **step-by-step approach** broken into **phases**:
 
 ### 🔹 Step 1: Real-Time Audio Capture with VAD
 
-* Use **WebRTC or MediaRecorder API** + **WebSocket**
-* Run **VAD** (Silero VAD or WebRTC VAD) on the client
-* Send chunks (e.g., 1s or 2s) only when voice is detected
+- Use **WebRTC or MediaRecorder API** + **WebSocket**
+- Run **VAD** (Silero VAD or WebRTC VAD) on the client
+- Send chunks (e.g., 1s or 2s) only when voice is detected
 
 ### 🔹 Step 2: FastAPI Backend — Real-Time Audio Ingestion
 
-* Accept audio chunks over WebSocket
-* Buffer and pass to STT
-* Maintain **session ID (user ID)** for each connection
+- Accept audio chunks over WebSocket
+- Buffer and pass to STT
+- Maintain **session ID (user ID)** for each connection
 
 ---
 
 ## ✅ Phase 2: **Speech-to-Text (STT)**
 
-* Use **Faster-Whisper** or **Whisper.cpp**
-* Maintain:
+- Use **Faster-Whisper** or **Whisper.cpp**
+- Maintain:
 
-  * **Partial transcription** (every 2 seconds)
-  * **Final transcription** (on VAD silence)
-* Send partials back via WebSocket to update UI
+  - **Partial transcription** (every 2 seconds)
+  - **Final transcription** (on VAD silence)
+
+- Send partials back via WebSocket to update UI
 
 ---
 
 ## ✅ Phase 3: **NLU, Entity Recognition, and Session**
 
-* Plug-in a simple pipeline:
+- Plug-in a simple pipeline:
 
-  * `Text → spaCy / Transformers → Entities → JSON`
-* Store session context in **Redis** keyed by `user_id`
+  - `Text → spaCy / Transformers → Entities → JSON`
+
+- Store session context in **Redis** keyed by `user_id`
 
 ---
 
 ## ✅ Phase 4: **Dialogue Manager**
 
-* Accept transcription + extracted entities
-* Decide:
+- Accept transcription + extracted entities
+- Decide:
 
-  * If info is missing: Ask for update
-  * If all info present: Proceed to LLM
-* Manage dialogue turns using Redis
+  - If info is missing: Ask for update
+  - If all info present: Proceed to LLM
+
+- Manage dialogue turns using Redis
 
 ---
 
 ## ✅ Phase 5: **LLM Response Generation**
 
-* Use:
+- Use:
 
-  * Local LLM (e.g., LLaMA2 / Mistral)
-  * OR Hosted API (e.g., OpenRouter/Groq)
-* Use **LangChain** for context injection, RAG if needed
-* Return curated final response
+  - Local LLM (e.g., LLaMA2 / Mistral)
+  - OR Hosted API (e.g., OpenRouter/Groq)
+
+- Use **LangChain** for context injection, RAG if needed
+- Return curated final response
 
 ---
 
 ## ✅ Phase 6: **Text-to-Speech (TTS)**
 
-* Use **Coqui TTS** in streaming mode
-* Convert text response into audio chunks
-* Stream audio back over **WebSocket** to the frontend
+- Use **Coqui TTS** in streaming mode
+- Convert text response into audio chunks
+- Stream audio back over **WebSocket** to the frontend
 
 ---
 
 ## ✅ Phase 7: **Frontend Chat-Like Interface**
 
-* Show:
+- Show:
 
-  * Live transcript as user speaks
-  * Bot's response (text + audio)
-* Maintain session chat history
+  - Live transcript as user speaks
+  - Bot's response (text + audio)
+
+- Maintain session chat history
 
 ---
 
 ## ✅ Phase 8: **Multi-User Support**
 
-* Use:
+- Use:
 
-  * Redis for per-session state
-  * `user_id` in WebSocket headers or JWT tokens
-* Spin up dedicated WebSocket handler per session
+  - Redis for per-session state
+  - `user_id` in WebSocket headers or JWT tokens
+
+- Spin up dedicated WebSocket handler per session
 
 ---
 
 ## ✅ Phase 9: **Deployment**
 
-* **Containerize** each service:
+- **Containerize** each service:
 
-  * STT, TTS, LLM, FastAPI Gateway
-* Use:
+  - STT, TTS, LLM, FastAPI Gateway
 
-  * **Nginx** as reverse proxy
-  * **Docker Compose** or **K8s** for orchestration
-* Use autoscaling based on:
+- Use:
 
-  * STT queue size
-  * LLM request latency
-  * TTS throughput
+  - **Nginx** as reverse proxy
+  - **Docker Compose** or **K8s** for orchestration
+
+- Use autoscaling based on:
+
+  - STT queue size
+  - LLM request latency
+  - TTS throughput
 
 ---
 
 ## ✅ Phase 10: **Extras**
 
-* RAG via **Chroma / Pinecone**
-* Semantic Memory via **FAISS** + Redis
-* User Authentication (optional): JWT / OAuth
-* Metrics Dashboard: Prometheus + Grafana
+- RAG via **Chroma / Pinecone**
+- Semantic Memory via **FAISS** + Redis
+- User Authentication (optional): JWT / OAuth
+- Metrics Dashboard: Prometheus + Grafana
 
 ---
 
@@ -253,5 +261,34 @@ voice-agent/
 
 ---
 
+## Updates and Recent Changes
 
+### Redis-Based Session Management
 
+- Implemented a `RedisSessionManager` class (`redis_manager.py`) for robust, concurrent, per-session state management.
+- All WebSocket sessions now use Redis for storing and retrieving user session data, enabling true multi-user support and isolation.
+
+### WebSocket Audio Endpoint
+
+- The `/ws/audio` WebSocket endpoint in the backend now:
+  - Assigns a unique session ID to each connection.
+  - Stores and updates conversation history in Redis for each session.
+  - Keeps the WebSocket connection open for the entire session, only closing on error or disconnect.
+  - Handles client disconnects and server shutdowns gracefully (suppresses noisy tracebacks).
+
+### Frontend
+
+- No changes required for Redis integration; the frontend continues to communicate via WebSocket as before.
+- The frontend can be extended to pass a session ID for reconnects or persistent sessions if needed.
+
+### Data Loading Utility
+
+- Added `load_excel_to_pg.py` for loading Excel data into PostgreSQL using pandas and SQLAlchemy.
+- Includes clear docstrings and comments for maintainability.
+
+### Code Quality
+
+- Added detailed docstrings and inline comments to major backend modules for clarity and maintainability.
+- Improved error handling and session cleanup in WebSocket logic.
+
+---
