@@ -1,16 +1,23 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
+
 from faster_whisper import WhisperModel
 import json
+import sys
 import numpy as np
 import asyncio
 import base64
 from fastapi import APIRouter
 from .nlu_engine import DiamondEntityExtractor 
+from services.audio_module import TTSProcessor 
 from uuid import uuid4
 from redis_manager import RedisSessionManager
 
 router = APIRouter()
 redis_manager = RedisSessionManager()
+
+loop = asyncio.get_running_loop()  
+tts_processor = TTSProcessor(loop=loop) 
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -51,6 +58,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
+            if websocket.application_state == WebSocketState.DISCONNECTED:
+                print(f"[INFO] Client disconnected: {session_id}")
+                break
             data = await websocket.receive()  # Receive data from the client
 
             if "bytes" in data:
@@ -92,6 +102,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         session = redis_manager.get_session(session_id)
                         session.setdefault("history", []).append(full_text)
                         redis_manager.set_session(session_id, session)
+
+                        # Prepare TTS message
+                        tts_text = "Hii this is a test of the TTS system. " + full_text
+
                         # Send final transcription to client
                         # === Add this: Extract and send entities === #
                         #entities = extract_entities(full_text)
@@ -101,14 +115,28 @@ async def websocket_endpoint(websocket: WebSocket):
                             #"data": entities})
                             #)
                         # === Generate TTS Response (Follow-up, etc.) ===
-                        followup_text = f"Got it. You said: {full_text}"
+                        #followup_text = f"Got it. You said: {full_text}"
                        
 
                         await websocket.send_text(json.dumps({
-                            "type": "tts_audio",
+                            "type": "final",
                             "session_id": session_id,
-                            "text": followup_text
+                            "text": full_text
                         }))
+                        # Initialize TTS Processor
+                        tts_processor = TTSProcessor(loop=loop)
+
+                        async def stream_audio():
+                            try:
+                                while True:
+                                    chunk = await tts_processor.audio_queue.get()
+                                    await websocket.send_bytes(chunk)
+                            except Exception as e:
+                                print(f"[TTS] WebSocket send failed: {e}")
+
+                        # Start streaming audio to frontend
+                        asyncio.create_task(stream_audio())
+                        tts_processor.synthesize(tts_text)
 
                     # Reset buffers for next utterance
                     partial_buffer = bytearray()
@@ -117,8 +145,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await asyncio.sleep(0.001)  # Yield to event loop
 
+    except WebSocketDisconnect:
+        print(f"[INFO] WebSocket closed cleanly: {session_id}")
+
     except Exception as e:
-        print(f"[ERROR] WebSocket error: {e}")  # Log any errors
+        print(f"[ERROR] WebSocket error: {e}")
+        try:
+            if websocket.application_state != WebSocketState.DISCONNECTED:
+                await websocket.close()
+        except RuntimeError:
+            pass
+
     finally:
         redis_manager.delete_session(session_id)
-        await websocket.close()  # Ensure the WebSocket is closed
+        try:
+            if websocket.application_state != WebSocketState.DISCONNECTED:
+                await websocket.close()
+        except RuntimeError:
+            pass

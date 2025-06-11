@@ -126,14 +126,16 @@
         function playStreamedTTS() {
             if (ttsAudioChunks.length === 0) return;
 
-            const rawData = ttsAudioChunks.shift();
-            const audioBuffer = ttsAudioContext.createBuffer(1, rawData.length / 2, 22050);
+            const chunk = ttsAudioChunks.shift();
+            const sampleRate = 24000;
+            const pcm = new DataView(chunk.buffer);
+            const samples = pcm.byteLength / 2;
+            const audioBuffer = ttsAudioContext.createBuffer(1, samples, sampleRate);
             const channelData = audioBuffer.getChannelData(0);
 
-            for (let i = 0; i < rawData.length; i += 2) {
-                const sample = (rawData[i + 1] << 8) | rawData[i];
-                const signedSample = sample >= 0x8000 ? sample - 0x10000 : sample;
-                channelData[i / 2] = signedSample / 32768.0;
+            for (let i = 0; i < samples; i++) {
+                const val = pcm.getInt16(i * 2, true); // little-endian
+                channelData[i] = val / 32768;
             }
 
             const source = ttsAudioContext.createBufferSource();
@@ -142,13 +144,14 @@
             source.start();
 
             source.onended = () => {
-                playStreamedTTS();
+                playStreamedTTS(); // Play next chunk
             };
         }
 
+
         function connectWebSocket() {
             ws = new WebSocket("ws://localhost:8000/api/v1/audio/ws/audio");
-            ws.binaryType = "blob";
+            ws.binaryType = "arraybuffer";
 
             ws.onopen = () => {
                 console.log("WebSocket connected.");
@@ -158,6 +161,7 @@
                 if (typeof event.data === "string") {
                     const data = JSON.parse(event.data);
 
+
                     if (data.type === "partial") {
                         appendMessage(data.text, true, "partial");
                     } else if (data.type === "final") {
@@ -165,19 +169,17 @@
                         appendMessage(data.text);
                     } else if (data.type === "entities") {
                         appendMessage(`Entities: ${JSON.stringify(data.data)}`);
-                    } else if (data.type === "tts_audio") {
-                        // ✅ Use browser TTS (Web Speech API)
-                        const utterance = new SpeechSynthesisUtterance(data.text);
-                        utterance.lang = 'en-US';
-                        utterance.onend = () => {
-                            console.log("TTS playback complete.");
-                        };
-                        // Optional: Cancel ongoing speech before speaking
-                        if (speechSynthesis.speaking) {
-                            speechSynthesis.cancel();
-                        }
-                        speechSynthesis.speak(utterance);
                     }
+                    else if (event.data instanceof ArrayBuffer) {
+                        // Binary audio chunk received
+                        ttsAudioChunks.push(new Uint8Array(event.data));
+
+                        // Start playback if not already playing
+                        if (ttsAudioChunks.length === 1) {
+                            playStreamedTTS();
+                        }
+                    }
+
                 }
             };
 

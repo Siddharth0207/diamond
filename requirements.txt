@@ -17,3 +17,7 @@ uvicorn[standard]
 pydantic
 websockets
 soundfile
+spacy
+redis
+redis-client
+psycopg2-binary
