@@ -1,23 +1,29 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
-
 from faster_whisper import WhisperModel
+from fastapi import APIRouter
+from RealtimeTTS import TextToAudioStream
+
 import json
 import sys
 import numpy as np
 import asyncio
 import base64
-from fastapi import APIRouter
-from .nlu_engine import DiamondEntityExtractor 
-from services.audio_module import TTSProcessor 
 from uuid import uuid4
+
+
+from .nlu_engine import DiamondEntityExtractor 
+
+from services.tts_engine import GTTS_AudioStream , GTTS_Engine
+
+
 from redis_manager import RedisSessionManager
 
 router = APIRouter()
 redis_manager = RedisSessionManager()
 
 loop = asyncio.get_running_loop()  
-tts_processor = TTSProcessor(loop=loop) 
+#tts_processor = TTSProcessor(loop=loop) 
 
 # Load the Whisper model globally when the app starts
 # You can change the model size and device
@@ -58,10 +64,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
+            try:
+                data = await websocket.receive()  # Receive data from the client
+            except Exception as e:
+                print(f"[INFO] WebSocket receive error or disconnect: {e}")
+                break
+
             if websocket.application_state == WebSocketState.DISCONNECTED:
                 print(f"[INFO] Client disconnected: {session_id}")
                 break
-            data = await websocket.receive()  # Receive data from the client
 
             if "bytes" in data:
                 chunk = data["bytes"]  # Audio chunk from client
@@ -104,7 +115,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         redis_manager.set_session(session_id, session)
 
                         # Prepare TTS message
-                        tts_text = "Hii this is a test of the TTS system. " + full_text
+                        tts_text =  full_text
 
                         # Send final transcription to client
                         # === Add this: Extract and send entities === #
@@ -124,19 +135,12 @@ async def websocket_endpoint(websocket: WebSocket):
                             "text": full_text
                         }))
                         # Initialize TTS Processor
-                        tts_processor = TTSProcessor(loop=loop)
+                        engine = GTTS_Engine()
+                        tts_processor = GTTS_AudioStream(engine)
+                        for chunk in tts_processor.synthesize_to_pcm_chunks(tts_text):
+                            await websocket.send_bytes(chunk)
+                        
 
-                        async def stream_audio():
-                            try:
-                                while True:
-                                    chunk = await tts_processor.audio_queue.get()
-                                    await websocket.send_bytes(chunk)
-                            except Exception as e:
-                                print(f"[TTS] WebSocket send failed: {e}")
-
-                        # Start streaming audio to frontend
-                        asyncio.create_task(stream_audio())
-                        tts_processor.synthesize(tts_text)
 
                     # Reset buffers for next utterance
                     partial_buffer = bytearray()

@@ -44,6 +44,7 @@
         let vadTimer = null;
         let audioBuffer = [];
         let ttsAudioChunks = [];
+        let ttsIsPlaying = false;
         let ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
 
         const VAD_SENSITIVITY = 0.02;
@@ -107,10 +108,14 @@
                 audioBuffer.push(...pcm);
 
                 if (max > VAD_SENSITIVITY) {
-                    if (!isSpeaking) isSpeaking = true;
+                    if (!isSpeaking) {
+                        isSpeaking = true;
+                        onUserStartSpeaking();
+                    }
                     clearTimeout(vadTimer);
                     vadTimer = setTimeout(() => {
                         isSpeaking = false;
+                        onUserStopSpeaking();
                         sendAudio(true);
                     }, VAD_TIMEOUT);
                 }
@@ -123,11 +128,26 @@
             connectWebSocket();
         }
 
+        function handleIncomingTTSChunk(chunk) {
+            ttsAudioChunks.push(new Uint8Array(chunk));
+            maybePlayTTS();
+        }
+
+        function maybePlayTTS() {
+            if (!ttsIsPlaying && !isSpeaking && ttsAudioChunks.length > 0) {
+                playStreamedTTS();
+            }
+        }
+
         function playStreamedTTS() {
-            if (ttsAudioChunks.length === 0) return;
+            if (ttsAudioChunks.length === 0 || isSpeaking) {
+                ttsIsPlaying = false;
+                return;
+            }
+            ttsIsPlaying = true;
 
             const chunk = ttsAudioChunks.shift();
-            const sampleRate = 24000;
+            const sampleRate = 24000; // or 22050, match your backend
             const pcm = new DataView(chunk.buffer);
             const samples = pcm.byteLength / 2;
             const audioBuffer = ttsAudioContext.createBuffer(1, samples, sampleRate);
@@ -144,10 +164,23 @@
             source.start();
 
             source.onended = () => {
-                playStreamedTTS(); // Play next chunk
+                ttsIsPlaying = false;
+                maybePlayTTS();
             };
         }
 
+        function onUserStartSpeaking() {
+            isSpeaking = true;
+            ttsIsPlaying = false;
+            // Optionally, you can stop current playback:
+            // ttsAudioContext.suspend();
+        }
+
+        function onUserStopSpeaking() {
+            isSpeaking = false;
+            // ttsAudioContext.resume();
+            maybePlayTTS();
+        }
 
         function connectWebSocket() {
             ws = new WebSocket("ws://localhost:8000/api/v1/audio/ws/audio");
@@ -170,16 +203,8 @@
                     } else if (data.type === "entities") {
                         appendMessage(`Entities: ${JSON.stringify(data.data)}`);
                     }
-                    else if (event.data instanceof ArrayBuffer) {
-                        // Binary audio chunk received
-                        ttsAudioChunks.push(new Uint8Array(event.data));
-
-                        // Start playback if not already playing
-                        if (ttsAudioChunks.length === 1) {
-                            playStreamedTTS();
-                        }
-                    }
-
+                } else if (event.data instanceof ArrayBuffer) {
+                    handleIncomingTTSChunk(event.data);
                 }
             };
 
