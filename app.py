@@ -11,7 +11,7 @@ from faster_whisper import WhisperModel
 from dotenv import load_dotenv
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware # Import for handling CORS
-from routers import summary, websocket_audio 
+from routers import websocket_audio 
 load_dotenv()
 templates = Jinja2Templates(directory="templates")
 app = FastAPI(
@@ -32,13 +32,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(summary.router, prefix="/api/v1/summary", tags=["Summary"])
 app.include_router(websocket_audio.router, prefix="/api/v1/audio", tags=["WebSocket Audio"])
 
 @app.get("/")
 async def root():
-    """
+    """s
     Root endpoint for the FastAPI backend.
 
     Returns:
