@@ -43,17 +43,3 @@ async def root():
         dict: A welcome message indicating the API is running.
     """
     return ({"message": "this is Root"})
-
-
-@app.post("/query")
-async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
-    session_id = fastapi_request.headers.get("x-session-id", "default_session")
-    logging.info(f"/query endpoint called. Session: {session_id}, Query: {request.query}")
-    finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres")
-    try:
-        result = await finder.find_diamonds(request.query)
-        logging.info(f"Query successful for session {session_id}")
-        return JSONResponse(content=result, headers={"x-session-id": session_id})
-    except Exception as e:
-        logging.error(f"Error in /query endpoint for session {session_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)

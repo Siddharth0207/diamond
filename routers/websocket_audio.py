@@ -4,10 +4,11 @@ from faster_whisper import WhisperModel
 from fastapi import APIRouter
 from RealtimeTTS import TextToAudioStream
 
-import json
+from utils.logger import logging
 import sys
 import numpy as np
 import asyncio
+import json
 import base64
 from uuid import uuid4
 
@@ -18,9 +19,13 @@ from services.tts_engine import GTTS_AudioStream , GTTS_Engine
 
 
 from redis_manager import RedisSessionManager
+from main import DiamondFinder
 
 router = APIRouter()
 redis_manager = RedisSessionManager()
+
+# Initialize DiamondFinder once
+diamond_finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres")
 
 loop = asyncio.get_running_loop()  
 #tts_processor = TTSProcessor(loop=loop) 
@@ -88,8 +93,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     audio_array = np.frombuffer(to_process, dtype=np.int16).astype(np.float32) / 32768.0
                     # Transcribe the audio chunk (partial)
                     segments, _ = model.transcribe(audio_array, beam_size=5, language="en", vad_filter=True)
+                    
+                    filtered_segments = [
+                        s for s in segments 
+                        if s.no_speech_prob < 0.3  # adjust threshold
+                    ]
                     # Combine all segment texts
-                    text = " ".join([s.text for s in segments])
+                    text = " ".join([s.text for s in filtered_segments])
 
                     # Send partial transcription to client
                     await websocket.send_text(json.dumps(
@@ -140,6 +150,43 @@ async def websocket_endpoint(websocket: WebSocket):
                         for chunk in tts_processor.synthesize_to_pcm_chunks(tts_text):
                             await websocket.send_bytes(chunk)
                         
+                        # After you have full_text
+                        
+                        # Direct call instead of HTTP request - more efficient
+                        try:
+                            logging.info(f"Calling diamond finder with text: {full_text}")
+                            result = await diamond_finder.find_diamonds(full_text)
+                            diamonds = result["diamonds"]
+                            summary = result["summary"]
+                            logging.info(f"Diamond search completed. Found {len(diamonds)} diamonds")
+                            logging.info(f"Summary: {summary}")
+                        except Exception as e:
+                            logging.error(f"Error in diamond search: {e}", exc_info=True)
+                            diamonds = []
+                            summary = "Error processing your request"
+
+                        # Send diamonds to frontend
+                        logging.info(f"Sending diamonds to frontend: {len(diamonds)} items")
+                        await websocket.send_text(json.dumps({
+                            "type": "diamonds",
+                            "diamonds": diamonds
+                        }))
+
+                        # Send summary as text to frontend
+                        logging.info(f"Sending summary to frontend: {summary}")
+                        print(f"[DEBUG] Sending summary message: {summary}")  # Debug print
+                        await websocket.send_text(json.dumps({
+                            "type": "summary",
+                            "text": summary
+                        }))
+
+                        # TTS on summary
+                        logging.info("Starting TTS synthesis for summary")
+                        engine = GTTS_Engine()
+                        tts_processor = GTTS_AudioStream(engine)
+                        for chunk in tts_processor.synthesize_to_pcm_chunks(summary):
+                            await websocket.send_bytes(chunk)
+                        logging.info("TTS synthesis completed")
 
 
                     # Reset buffers for next utterance

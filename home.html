@@ -29,6 +29,31 @@
             opacity: 0.6;
             font-style: italic;
         }
+
+        .diamonds-display {
+            background: #fff8e1 !important;
+            border-left: 4px solid #ff9800 !important;
+        }
+
+        .diamond-item {
+            background: #f8f9fa;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 3px solid #007bff;
+            font-size: 14px;
+        }
+
+        .summary-display {
+            background: #e8f4fd !important;
+            border-left: 4px solid #0066cc !important;
+            font-weight: bold;
+        }
+
+        .summary-display h4 {
+            margin-top: 0;
+            color: #0066cc;
+        }
     </style>
 </head>
 
@@ -47,7 +72,7 @@
         let ttsIsPlaying = false;
         let ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
 
-        const VAD_SENSITIVITY = 0.02;
+        const VAD_SENSITIVITY = 0.035;
         const VAD_TIMEOUT = 1000;
         const SAMPLE_RATE = 16000;
 
@@ -63,6 +88,49 @@
             div.className = "message" + (isPartial ? " partial" : "");
             div.innerText = text;
             if (id) div.id = id;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function displayDiamonds(diamonds) {
+            if (!diamonds || diamonds.length === 0) {
+                appendMessage("No diamonds found matching your criteria.");
+                return;
+            }
+
+            const chat = document.getElementById('chat');
+            const div = document.createElement("div");
+            div.className = "message diamonds-display";
+
+            let html = `<h3> Found ${diamonds.length} Diamond${diamonds.length > 1 ? 's' : ''}:</h3>`;
+
+            diamonds.forEach((diamond, index) => {
+                html += `
+                    <div class="diamond-item" style="background: #f8f9fa; margin: 10px 0; padding: 10px; border-radius: 5px; border-left: 3px solid #007bff;">
+                        <strong>Diamond ${index + 1}:</strong><br>
+                        <strong>Shape:</strong> ${diamond.shape || 'N/A'}<br>
+                        <strong>Carat:</strong> ${diamond.carat || 'N/A'}<br>
+                        <strong>Color:</strong> ${diamond.color || 'N/A'}<br>
+                        <strong>Clarity:</strong> ${diamond.clarity || 'N/A'}<br>
+                        <strong>Cut:</strong> ${diamond.cut || 'N/A'}<br>
+                        <strong>Price:</strong> $${diamond.price ? diamond.price.toLocaleString() : 'N/A'}
+                    </div>
+                `;
+            });
+
+            div.innerHTML = html;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function displaySummary(summaryText) {
+            if (!summaryText || !summaryText.trim()) return;
+
+            const chat = document.getElementById('chat');
+            const div = document.createElement("div");
+            div.className = "message summary-display";
+            div.style.cssText = "background: #e8f4fd; border-left: 4px solid #0066cc; font-weight: bold;";
+            div.innerHTML = `<h4> Summary:</h4><p>${summaryText}</p>`;
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
         }
@@ -189,11 +257,10 @@
             ws.onopen = () => {
                 console.log("WebSocket connected.");
             };
-
+            // handles the IncomingMessages from Backend
             ws.onmessage = (event) => {
                 if (typeof event.data === "string") {
                     const data = JSON.parse(event.data);
-
 
                     if (data.type === "partial") {
                         appendMessage(data.text, true, "partial");
@@ -202,6 +269,12 @@
                         appendMessage(data.text);
                     } else if (data.type === "entities") {
                         appendMessage(`Entities: ${JSON.stringify(data.data)}`);
+                    } else if (data.type === "diamonds") {
+                        console.log("Received diamonds:", data.diamonds);
+                        displayDiamonds(data.diamonds);
+                    } else if (data.type === "summary") {
+                        console.log("Received summary:", data.text);
+                        displaySummary(data.text);
                     }
                 } else if (event.data instanceof ArrayBuffer) {
                     handleIncomingTTSChunk(event.data);

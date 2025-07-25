@@ -10,7 +10,7 @@ class TTSProcessor:
         self.voice = voice
         self.stop_event = threading.Event()
         self.audio_queue = asyncio.Queue()
-        self.loop = loop  # ✅ store the main event loop
+        self.loop = loop  # store the main event loop
 
     def stop(self):
         self.stop_event.set()

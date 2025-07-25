@@ -506,9 +506,13 @@ class DiamondFinder:
         response = await asyncio.get_event_loop().run_in_executor(
             None, self.llm.invoke, [HumanMessage(content=summary_prompt)]
         )
-        return {
+        
+        result = {
             "diamonds": diamonds,
             "summary": response.content,
             "sql_query": sql,
             "total_count": total_count
         }
+        
+        print(f"[DEBUG] DiamondFinder returning: diamonds={len(diamonds)}, summary_length={len(response.content) if response.content else 0}")
+        return result
